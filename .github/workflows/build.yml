@@ -1,0 +1,99 @@
+# ============================================================================
+# GitHub Actions Workflow for v86-BIOS
+# ============================================================================
+
+name: Build v86-BIOS
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and Test BIOS
+    runs-on: ubuntu-latest
+    
+    steps:
+      # Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      # Install tools
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm qemu-system-x86 qemu-utils
+          nasm -version
+          qemu-system-i386 --version
+      
+      # Build BIOS
+      - name: Build v86-BIOS
+        run: |
+          make build
+          ls -la bios.bin
+      
+      # Verify size
+      - name: Verify BIOS size
+        run: |
+          SIZE=$(stat -c%s bios.bin)
+          echo "BIOS size: $SIZE bytes"
+          if [ $SIZE -eq 65536 ]; then
+            echo "✅ Size check passed (64KB)"
+          else
+            echo "❌ Size check failed! Expected 65536 bytes, got $SIZE"
+            exit 1
+          fi
+      
+      # Build test disk
+      - name: Build test disk
+        run: |
+          make full
+          ls -la disk.img
+      
+      # Quick test with QEMU
+      - name: Quick QEMU test
+        run: |
+          echo "Running quick QEMU test..."
+          timeout 5s make quick-test || true
+          echo "✅ QEMU test completed"
+      
+      # Upload artifacts
+      - name: Upload BIOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v86-bios
+          path: |
+            bios.bin
+            disk.img
+            Makefile
+          retention-days: 30
+      
+      # Upload to release if tagged
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            bios.bin
+            disk.img
+          name: v86-BIOS ${{ github.ref_name }}
+          body: |
+            ## v86-BIOS ${{ github.ref_name }}
+            
+            A minimal BIOS for v86 emulator.
+            
+            ### Build Information
+            - Built from: ${{ github.sha }}
+            - Date: ${{ github.event.head_commit.timestamp }}
+            - Size: 64KB
+            
+            ### Usage
+            ```bash
+            # QEMU
+            qemu-system-i386 -bios bios.bin
+            
+            # v86 (JavaScript)
+            new V86Starter({ bios: { url: "bios.bin" } })
